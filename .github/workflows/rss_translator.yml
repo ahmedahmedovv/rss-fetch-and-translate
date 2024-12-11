@@ -9,12 +9,13 @@ jobs:
   translate:
     runs-on: ubuntu-latest
     timeout-minutes: 30  # Add overall timeout
+    permissions:
+      contents: write  # Add explicit permission to write contents
     
     steps:
     - uses: actions/checkout@v3
       with:
-        persist-credentials: false
-        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}  # Use the built-in token
     
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -53,4 +54,9 @@ jobs:
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
         git add -f data/translated_feeds.json
-        git diff --quiet && git diff --staged --quiet || (git commit -m "Update translated feeds" && git push) 
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Update translated feeds"
+          git push
+        fi 
