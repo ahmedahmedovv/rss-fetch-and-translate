@@ -74,12 +74,17 @@ jobs:
           git push
         fi 
     
+    - name: Create log file
+      run: |
+        echo "Creating test log file..."
+        mkdir -p log
+        echo "Test log content" > log/test.log
+        ls -la log/
+    
     - name: Upload logs
-      if: always()
+      if: success() || failure()  # Upload logs whether the workflow succeeds or fails
       uses: actions/upload-artifact@v3
       with:
         name: rss-translator-logs
-        path: |
-          log/*.log*
-          log/runtime.log
-        retention-days: 7
+        path: log/
+        if-no-files-found: error  # Will fail the workflow if no logs are found
