@@ -9,6 +9,7 @@ import logging
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich import print as rprint
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class RSSTranslator:
     def __init__(self, file_path='url.md', config=None):
@@ -32,6 +33,7 @@ class RSSTranslator:
             'target_language': 'en',
             'sleep_time': 1
         }
+        # Consider moving config to external file
 
     def read_feed_urls(self):
         """Read RSS feed URLs from the file"""
@@ -62,62 +64,46 @@ class RSSTranslator:
     def fetch_and_translate_feed(self, url):
         """Fetch and translate a single feed"""
         try:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=self.console
-            ) as progress:
-                feed = feedparser.parse(url)
-                task = progress.add_task(f"Processing feed: {feed.feed.title if hasattr(feed.feed, 'title') else url}")
-                
-                feed_data = []
-                for entry in feed.entries[:5]:
-                    # Skip if entry has already been processed
-                    if entry.link in self.processed_links:
-                        progress.update(task, description=f"Skipping existing entry: {entry.title[:30]}...")
-                        continue
+            feed = feedparser.parse(url)
+            feed_data = []
+            
+            for entry in feed.entries[:5]:
+                # Skip if entry has already been processed
+                if entry.link in self.processed_links:
+                    continue
 
-                    progress.update(task, description=f"Translating: {entry.title[:30]}...")
-                    
-                    title = self.translate_text(entry.title)
-                    description = self.translate_text(entry.description) if hasattr(entry, 'description') else ""
-                    pub_date = entry.published if hasattr(entry, 'published') else "No date"
+                title = self.translate_text(entry.title)
+                description = self.translate_text(entry.description) if hasattr(entry, 'description') else ""
+                pub_date = entry.published if hasattr(entry, 'published') else "No date"
 
-                    # Convert pub_date to ISO format
+                # Convert pub_date to ISO format
+                try:
+                    parsed_date = datetime.strptime(pub_date, '%a, %d %b %Y %H:%M:%S %z')
+                    iso_pub_date = parsed_date.isoformat()
+                except ValueError:
                     try:
-                        parsed_date = datetime.strptime(pub_date, '%a, %d %b %Y %H:%M:%S %z')
+                        parsed_date = datetime.strptime(pub_date, '%a, %d %b %Y %H:%M:%S %Z')
                         iso_pub_date = parsed_date.isoformat()
                     except ValueError:
-                        try:
-                            # Try alternative format (some feeds use different format)
-                            parsed_date = datetime.strptime(pub_date, '%a, %d %b %Y %H:%M:%S %Z')
-                            iso_pub_date = parsed_date.isoformat()
-                        except ValueError:
-                            iso_pub_date = pub_date  # Keep original if parsing fails
+                        iso_pub_date = pub_date
 
-                    # Store entry data
-                    entry_data = {
-                        'title': title,
-                        'published': pub_date,
-                        'link': entry.link,
-                        'description': description[:200],
-                        'original_date': iso_pub_date,
-                        'translated_at': datetime.now().isoformat()
-                    }
+                entry_data = {
+                    'title': title,
+                    'published': pub_date,
+                    'link': entry.link,
+                    'description': description[:200],
+                    'original_date': iso_pub_date,
+                    'translated_at': datetime.now().isoformat()
+                }
 
-                    # Add to processed links
-                    self.processed_links.add(entry.link)
-                    feed_data.append(entry_data)
+                self.processed_links.add(entry.link)
+                feed_data.append(entry_data)
 
-                    # Log entry details
-                    logging.info(f"Title: {title}, Published: {pub_date}, Link: {entry.link}")
-
-                if feed_data:  # Only save if there are new entries
-                    progress.update(task, description="Saving new entries...")
-                    self.save_to_json(feed_data)
-                    rprint(f"[green]✓[/green] Added {len(feed_data)} new entries from: {feed.feed.title if hasattr(feed.feed, 'title') else url}")
-                else:
-                    rprint(f"[yellow]ℹ[/yellow] No new entries found for: {feed.feed.title if hasattr(feed.feed, 'title') else url}")
+            if feed_data:
+                self.save_to_json(feed_data)
+                rprint(f"[green]✓[/green] Added {len(feed_data)} new entries from: {feed.feed.title if hasattr(feed.feed, 'title') else url}")
+            else:
+                rprint(f"[yellow]ℹ[/yellow] No new entries found for: {feed.feed.title if hasattr(feed.feed, 'title') else url}")
 
         except Exception as e:
             rprint(f"[red]Error processing feed {url}: {str(e)}[/red]")
@@ -161,21 +147,36 @@ def main():
         force=True
     )
     
-    with console.status("[bold green]Starting RSS Feed Translator...") as status:
-        app = RSSTranslator()
+    app = RSSTranslator()
+    
+    try:
+        console.print("[bold blue]Beginning feed processing[/bold blue]")
         
-        try:
-            console.print("[bold blue]Beginning feed processing[/bold blue]")
-            for url in app.feeds:
-                status.update(f"Processing feed: {url}")
-                app.fetch_and_translate_feed(url)
-                time.sleep(1)
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            # Create a simple status display
+            total_feeds = len(app.feeds)
+            processed_feeds = 0
             
-            console.print("[bold green]✓ Feed processing completed successfully![/bold green]")
+            futures = [
+                executor.submit(app.fetch_and_translate_feed, url)
+                for url in app.feeds
+            ]
             
-        except Exception as e:
-            console.print(f"[bold red]Unexpected error: {str(e)}[/bold red]")
-            logging.error(f"Unexpected error: {str(e)}")
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                    processed_feeds += 1
+                    console.print(f"[cyan]Progress: {processed_feeds}/{total_feeds} feeds processed[/cyan]")
+                except Exception as e:
+                    console.print(f"[bold red]Error in feed processing: {str(e)}[/bold red]")
+                    logging.error(f"Error in feed processing: {str(e)}")
+        
+        console.print("[bold green]✓ Feed processing completed successfully![/bold green]")
+        
+    except Exception as e:
+        console.print(f"[bold red]Unexpected error: {str(e)}[/bold red]")
+        logging.error(f"Unexpected error: {str(e)}")
 
 if __name__ == "__main__":
     main()
