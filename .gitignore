@@ -30,8 +30,10 @@ ENV/
 log/
 data/
 *.log
-translated_feeds.json
-translated_feeds.lock
+!data/
+data/*
+!data/.gitkeep
+!data/translated_feeds.json
 *.backup
 
 # IDE

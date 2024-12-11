@@ -17,12 +17,12 @@ paths:
   feed_urls: 'url.md'
 
 threading:
-  max_workers: 5
-  process_timeout: 60  # Seconds
+  max_workers: 3
+  process_timeout: 120
 
 feed_processing:
-  max_age_days: 1  # Maximum age of entries to process in days
-  request_timeout: 30  # Seconds
+  max_age_days: 1
+  request_timeout: 45
   max_retries: 3
   retry_delay: 5
   verify_ssl: true

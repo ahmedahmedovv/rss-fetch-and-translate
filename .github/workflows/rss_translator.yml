@@ -8,9 +8,13 @@ on:
 jobs:
   translate:
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # Add overall timeout
     
     steps:
     - uses: actions/checkout@v3
+      with:
+        persist-credentials: false
+        fetch-depth: 0
     
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -21,6 +25,12 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+    
+    - name: Create directories
+      run: |
+        mkdir -p data
+        mkdir -p log
+        touch data/.gitkeep
     
     - name: Run translator
       run: |
@@ -42,5 +52,5 @@ jobs:
       run: |
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
-        git add data/translated_feeds.json
+        git add -f data/translated_feeds.json
         git diff --quiet && git diff --staged --quiet || (git commit -m "Update translated feeds" && git push) 
