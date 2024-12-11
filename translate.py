@@ -114,27 +114,96 @@ class RSSTranslator:
                     )
                     response.raise_for_status()
                     
-                    # Try multiple parsing approaches
-                    feed = feedparser.parse(response.content)
+                    # Debug log the response
+                    logging.debug(f"Response content type: {response.headers.get('content-type')}")
+                    logging.debug(f"Response content (first 500 chars): {response.text[:500]}")
                     
-                    # If no entries found, try alternative parsing methods
-                    if not feed.entries and response.content:
+                    # Try parsing with different encodings if needed
+                    encodings = ['utf-8', 'iso-8859-1', 'windows-1252']
+                    feed = None
+                    
+                    for encoding in encodings:
                         try:
-                            # Try parsing as XML first
+                            content = response.content.decode(encoding)
+                            feed = feedparser.parse(content)
+                            if feed.entries:
+                                break
+                        except UnicodeDecodeError:
+                            continue
+                    
+                    # If still no entries, try parsing as raw content
+                    if not feed or not feed.entries:
+                        feed = feedparser.parse(response.content)
+                    
+                    # If still no entries, try alternative methods
+                    if not feed.entries:
+                        try:
+                            # Try parsing as XML
                             from xml.etree import ElementTree as ET
-                            root = ET.fromstring(response.content)
-                            feed = feedparser.parse(response.content)
-                        except ET.ParseError:
+                            content = response.content
+                            # Remove any BOM if present
+                            if content.startswith(b'\xef\xbb\xbf'):
+                                content = content[3:]
+                            root = ET.fromstring(content)
+                            
+                            # Look for RSS or Atom elements
+                            items = root.findall('.//item') or root.findall('.//{http://www.w3.org/2005/Atom}entry')
+                            
+                            if items:
+                                # Construct a feed-like structure
+                                feed_dict = {'entries': []}
+                                for item in items:
+                                    entry = {}
+                                    # Extract title
+                                    title_elem = (item.find('title') or item.find('{http://www.w3.org/2005/Atom}title'))
+                                    if title_elem is not None:
+                                        entry['title'] = title_elem.text
+                                    
+                                    # Extract link
+                                    link_elem = (item.find('link') or item.find('{http://www.w3.org/2005/Atom}link'))
+                                    if link_elem is not None:
+                                        entry['link'] = link_elem.text or link_elem.get('href')
+                                    
+                                    # Extract description/content
+                                    desc_elem = (item.find('description') or 
+                                               item.find('{http://www.w3.org/2005/Atom}content') or 
+                                               item.find('{http://www.w3.org/2005/Atom}summary'))
+                                    if desc_elem is not None:
+                                        entry['description'] = desc_elem.text
+                                    
+                                    # Extract publication date
+                                    date_elem = (item.find('pubDate') or 
+                                               item.find('{http://www.w3.org/2005/Atom}published') or 
+                                               item.find('date'))
+                                    if date_elem is not None:
+                                        entry['published'] = date_elem.text
+                                    
+                                    feed_dict['entries'].append(entry)
+                                
+                                feed = feedparser.FeedParserDict(feed_dict)
+                        
+                        except Exception as e:
+                            logging.debug(f"XML parsing failed for {url}: {str(e)}")
+                            
                             try:
-                                # Try parsing as HTML and look for feed links
+                                # Try parsing as HTML
                                 from bs4 import BeautifulSoup
                                 soup = BeautifulSoup(response.content, 'html.parser')
-                                feed_links = soup.find_all('link', type='application/rss+xml')
+                                
+                                # Try to find RSS link
+                                feed_links = (
+                                    soup.find_all('link', type='application/rss+xml') +
+                                    soup.find_all('link', type='application/atom+xml')
+                                )
                                 
                                 if feed_links:
-                                    # Try the first RSS link found
                                     rss_url = feed_links[0].get('href')
                                     if rss_url:
+                                        if not rss_url.startswith('http'):
+                                            # Handle relative URLs
+                                            from urllib.parse import urljoin
+                                            rss_url = urljoin(url, rss_url)
+                                        
                                         rss_response = session.get(
                                             rss_url,
                                             timeout=timeout,
@@ -142,10 +211,12 @@ class RSSTranslator:
                                             verify=True
                                         )
                                         feed = feedparser.parse(rss_response.content)
+                            
                             except Exception as e:
                                 logging.debug(f"HTML parsing failed for {url}: {str(e)}")
                     
-                    break  # If successful, break the retry loop
+                    if feed and feed.entries:
+                        break  # Successfully found entries, break retry loop
                     
                 except RequestException as e:
                     if attempt == max_retries - 1:  # Last attempt
@@ -154,15 +225,16 @@ class RSSTranslator:
                         return
                     time.sleep(2 ** attempt)  # Exponential backoff
             
-            # Debug output for empty feeds
-            if not feed.entries:
-                logging.debug(f"Feed content for {url}: {response.content[:500]}")
-            
             feed_title = feed.feed.title if hasattr(feed.feed, 'title') else url
             
             if not feed.entries:
                 rprint(f"[yellow]ℹ No entries found for: {feed_title}[/yellow]")
+                logging.debug(f"Feed parsing failed for {url}. Content: {response.content[:1000]}")
                 return
+            
+            # Debug output for empty feeds
+            if not feed.entries:
+                logging.debug(f"Feed content for {url}: {response.content[:500]}")
             
             feed_data = []
             
