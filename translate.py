@@ -28,28 +28,48 @@ class RSSTranslator:
         self.log_dir = Path(self.config['logging']['log_directory'])
         self.log_dir.mkdir(exist_ok=True)
         
-        # Setup logging
+        # Setup logging with both file and console handlers
         log_file = self.log_dir / 'rss_translator.log'
-        logging.basicConfig(
-            level=logging.DEBUG,  # Set to DEBUG to capture all logs
-            format=self.config['logging']['log_format'],
-            handlers=[
-                RotatingFileHandler(
-                    log_file,
-                    maxBytes=self.config['logging'].get('max_bytes', 10485760),
-                    backupCount=self.config['logging'].get('backup_count', 5)
-                ),
-                logging.StreamHandler()  # Also log to console
-            ]
+        
+        # Create formatter
+        formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
         )
+        
+        # File handler
+        file_handler = RotatingFileHandler(
+            log_file,
+            maxBytes=self.config['logging'].get('max_bytes', 10485760),
+            backupCount=self.config['logging'].get('backup_count', 5),
+            encoding='utf-8'
+        )
+        file_handler.setFormatter(formatter)
+        file_handler.setLevel(logging.DEBUG)
+        
+        # Console handler
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        console_handler.setLevel(logging.INFO)
+        
+        # Setup root logger
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.DEBUG)
+        root_logger.addHandler(file_handler)
+        root_logger.addHandler(console_handler)
+        
+        # Initial log messages
+        logging.info("RSSTranslator initialization started")
+        logging.debug(f"Configuration loaded from {config_path}")
         
         self.file_path = self.config['paths']['feed_urls']
         self.feeds = self.read_feed_urls()
+        logging.info(f"Loaded {len(self.feeds)} feeds from {self.file_path}")
         
         # Create both data and lock directories
         self.data_dir = Path(self.config['paths']['data_directory'])
         self.data_dir.mkdir(exist_ok=True)
-        self.lock_dir = self.data_dir  # Lock files will be in same directory
+        self.lock_dir = self.data_dir
         self.output_file = self.data_dir / self.config['paths']['output_file']
         
         self.console = Console()

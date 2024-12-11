@@ -45,8 +45,12 @@ jobs:
     
     - name: Run translator
       run: |
+        # Ensure log directory exists and is writable
+        mkdir -p log
+        chmod 777 log
+        
         for i in {1..3}; do
-          python translate.py && break || {
+          python -u translate.py 2>&1 | tee log/runtime.log && break || {
             if [[ $i == 3 ]]; then
               echo "Failed after 3 attempts!"
               exit 1
@@ -71,11 +75,11 @@ jobs:
         fi 
     
     - name: Upload logs
-      if: always()  # Upload logs even if the script fails
+      if: always()
       uses: actions/upload-artifact@v3
       with:
         name: rss-translator-logs
         path: |
-          log/*.log
-          log/*.log.*
+          log/*.log*
+          log/runtime.log
         retention-days: 7
