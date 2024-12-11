@@ -87,30 +87,64 @@ class RSSTranslator:
     def fetch_and_translate_feed(self, url):
         """Fetch and translate a single feed"""
         try:
-            # Increase timeout and add retry logic
             max_retries = self.config.get('feed_processing', {}).get('max_retries', 3)
             timeout = self.config.get('feed_processing', {}).get('request_timeout', 30)
             
             for attempt in range(max_retries):
                 try:
+                    # Enhanced headers to mimic a real browser
                     headers = {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                         'Accept-Language': 'en-US,en;q=0.5',
                         'Accept-Encoding': 'gzip, deflate, br',
+                        'Cache-Control': 'no-cache',
+                        'Pragma': 'no-cache',
+                        'DNT': '1',
                         'Connection': 'keep-alive',
-                        'Upgrade-Insecure-Requests': '1'
+                        'Upgrade-Insecure-Requests': '1',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'none',
+                        'Sec-Fetch-User': '?1'
                     }
                     
-                    response = requests.get(
-                        url, 
+                    session = requests.Session()
+                    
+                    # First make a HEAD request to check content type
+                    head_response = session.head(
+                        url,
+                        timeout=timeout,
+                        headers=headers,
+                        allow_redirects=True
+                    )
+                    
+                    # Get the final URL after any redirects
+                    final_url = head_response.url
+                    
+                    response = session.get(
+                        final_url,
                         timeout=timeout,
                         headers=headers,
                         verify=True
                     )
                     response.raise_for_status()
+                    
+                    # Try different parsing methods
                     feed = feedparser.parse(response.content)
+                    
+                    # If no entries found, try parsing as raw XML
+                    if not feed.entries and response.content:
+                        try:
+                            from xml.etree import ElementTree as ET
+                            root = ET.fromstring(response.content)
+                            # Force feedparser to parse as RSS
+                            feed = feedparser.parse(response.content, force_feed=True)
+                        except ET.ParseError:
+                            pass
+                    
                     break  # If successful, break the retry loop
+                    
                 except RequestException as e:
                     if attempt == max_retries - 1:  # Last attempt
                         rprint(f"[red]Error fetching feed {url} after {max_retries} attempts: {str(e)}[/red]")
@@ -118,10 +152,9 @@ class RSSTranslator:
                         return
                     time.sleep(2 ** attempt)  # Exponential backoff
             
-            # Check if feed parsing was successful
-            if not feed.entries and not getattr(feed, 'status', 200) == 200:
-                rprint(f"[red]Error parsing feed: {url}[/red]")
-                return
+            # Debug output
+            if not feed.entries:
+                logging.debug(f"Feed content for {url}: {response.content[:500]}")
             
             feed_title = feed.feed.title if hasattr(feed.feed, 'title') else url
             
