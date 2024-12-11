@@ -24,6 +24,9 @@ feed_processing:
   max_age_days: 1  # Maximum age of entries to process in days
   request_timeout: 30  # Seconds
   max_retries: 3
+  retry_delay: 5
+  verify_ssl: true
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 
 output:
   json_indent: 2
