@@ -11,7 +11,11 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich import print as rprint
 
 class RSSTranslator:
-    def __init__(self, file_path='url.md'):
+    def __init__(self, file_path='url.md', config=None):
+        # Create log directory if it doesn't exist
+        self.log_dir = Path('log')
+        self.log_dir.mkdir(exist_ok=True)
+        
         self.file_path = file_path
         self.translator = Translator()
         self.feeds = self.read_feed_urls()
@@ -22,6 +26,12 @@ class RSSTranslator:
         self.console = Console()
         logging.info(f"RSSTranslator initialized with {len(self.feeds)} feeds")
         self.processed_links = self.load_processed_links()
+        self.config = config or {
+            'entries_limit': 5,
+            'description_length': 200,
+            'target_language': 'en',
+            'sleep_time': 1
+        }
 
     def read_feed_urls(self):
         """Read RSS feed URLs from the file"""
@@ -138,12 +148,17 @@ class RSSTranslator:
 def main():
     console = Console()
     
-    # Set up logging
+    # Create log directory before setting up logging
+    log_dir = Path('log')
+    log_dir.mkdir(exist_ok=True)
+    
+    # Set up logging with new log directory
+    log_file = log_dir / 'rss_translator.log'
     logging.basicConfig(
-        filename='rss_translator.log',
+        filename=log_file,
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
-        force=True  # This ensures the logging config is applied
+        force=True
     )
     
     with console.status("[bold green]Starting RSS Feed Translator...") as status:
