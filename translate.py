@@ -10,30 +10,30 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich import print as rprint
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import yaml
 
 class RSSTranslator:
-    def __init__(self, file_path='url.md', config=None):
+    def __init__(self, config_path='config.yaml'):
+        # Load configuration
+        with open(config_path, 'r') as f:
+            self.config = yaml.safe_load(f)
+        
         # Create log directory if it doesn't exist
-        self.log_dir = Path('log')
+        self.log_dir = Path(self.config['logging']['log_directory'])
         self.log_dir.mkdir(exist_ok=True)
         
-        self.file_path = file_path
+        self.file_path = self.config['paths']['feed_urls']
         self.translator = Translator()
         self.feeds = self.read_feed_urls()
+        
         # Create data directory if it doesn't exist
-        self.data_dir = Path('data')
+        self.data_dir = Path(self.config['paths']['data_directory'])
         self.data_dir.mkdir(exist_ok=True)
-        self.output_file = self.data_dir / 'translated_feeds.json'
+        self.output_file = self.data_dir / self.config['paths']['output_file']
+        
         self.console = Console()
         logging.info(f"RSSTranslator initialized with {len(self.feeds)} feeds")
         self.processed_links = self.load_processed_links()
-        self.config = config or {
-            'entries_limit': 5,
-            'description_length': 200,
-            'target_language': 'en',
-            'sleep_time': 1
-        }
-        # Consider moving config to external file
 
     def read_feed_urls(self):
         """Read RSS feed URLs from the file"""
@@ -41,10 +41,13 @@ class RSSTranslator:
             return [line.strip() for line in file if line.strip() and not line.startswith('#')]
 
     def translate_text(self, text):
-        """Translate text to English"""
+        """Translate text to configured target language"""
         try:
             if text:
-                return self.translator.translate(text, dest='en').text
+                return self.translator.translate(
+                    text, 
+                    dest=self.config['translator']['target_language']
+                ).text
             return ""
         except Exception as e:
             return f"Translation error: {str(e)}"
@@ -67,7 +70,7 @@ class RSSTranslator:
             feed = feedparser.parse(url)
             feed_data = []
             
-            for entry in feed.entries[:5]:
+            for entry in feed.entries[:self.config['translator']['entries_limit']]:
                 # Skip if entry has already been processed
                 if entry.link in self.processed_links:
                     continue
@@ -91,7 +94,7 @@ class RSSTranslator:
                     'title': title,
                     'published': pub_date,
                     'link': entry.link,
-                    'description': description[:200],
+                    'description': description[:self.config['translator']['description_length']],
                     'original_date': iso_pub_date,
                     'translated_at': datetime.now().isoformat()
                 }
