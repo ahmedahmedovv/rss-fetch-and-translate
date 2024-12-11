@@ -41,6 +41,7 @@ jobs:
         mkdir -p data
         mkdir -p log
         touch data/.gitkeep
+        touch log/.gitkeep
     
     - name: Run translator
       run: |
@@ -68,3 +69,13 @@ jobs:
           git commit -m "Update translated feeds"
           git push
         fi 
+    
+    - name: Upload logs
+      if: always()  # Upload logs even if the script fails
+      uses: actions/upload-artifact@v3
+      with:
+        name: rss-translator-logs
+        path: |
+          log/*.log
+          log/*.log.*
+        retention-days: 7

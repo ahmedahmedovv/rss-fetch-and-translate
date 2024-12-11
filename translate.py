@@ -28,6 +28,21 @@ class RSSTranslator:
         self.log_dir = Path(self.config['logging']['log_directory'])
         self.log_dir.mkdir(exist_ok=True)
         
+        # Setup logging
+        log_file = self.log_dir / 'rss_translator.log'
+        logging.basicConfig(
+            level=logging.DEBUG,  # Set to DEBUG to capture all logs
+            format=self.config['logging']['log_format'],
+            handlers=[
+                RotatingFileHandler(
+                    log_file,
+                    maxBytes=self.config['logging'].get('max_bytes', 10485760),
+                    backupCount=self.config['logging'].get('backup_count', 5)
+                ),
+                logging.StreamHandler()  # Also log to console
+            ]
+        )
+        
         self.file_path = self.config['paths']['feed_urls']
         self.feeds = self.read_feed_urls()
         
