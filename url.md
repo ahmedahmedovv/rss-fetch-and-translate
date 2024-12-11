@@ -1,4 +1,5 @@
 https://notesfrompoland.com/feed/
+https://notesfrompoland.com/rss/
 https://politepol.com/fd/b8Ymwy4PRsNS.xml
 https://politepol.com/fd/aN6R8Je2fUr5.xml
 https://politepol.com/fd/1jNMAkmHDN1t.xml
