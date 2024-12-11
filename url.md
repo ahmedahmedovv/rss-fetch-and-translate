@@ -58,7 +58,5 @@ https://politepol.com/fd/1HxW1FCnF1sA.xml
 https://wiadomosci.wp.pl/rss.xml
 https://www.wirtualnemedia.pl/rss/wirtualnemedia_rss.xml
 https://wyborcza.pl/pub/rss/gazetawyborcza_kraj.xml
-http://fetchrss.com/rss/634f14f383510f2001669d42664dc6d40c48d27e6063f313.xml
 https://politepol.com/fd/EgW0phrfwRFg
 https://warsawnow.pl/feed/
-c

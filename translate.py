@@ -1,5 +1,5 @@
 import feedparser
-from googletrans import Translator
+from deep_translator import GoogleTranslator
 import os
 import time
 from datetime import datetime, timedelta, timezone
@@ -13,6 +13,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import yaml
 from dateutil import parser
 from logging.handlers import RotatingFileHandler
+import requests
+from requests.exceptions import RequestException
+from urllib.parse import urlparse
+from bs4 import BeautifulSoup
 
 class RSSTranslator:
     def __init__(self, config_path='config.yaml'):
@@ -25,12 +29,12 @@ class RSSTranslator:
         self.log_dir.mkdir(exist_ok=True)
         
         self.file_path = self.config['paths']['feed_urls']
-        self.translator = Translator()
         self.feeds = self.read_feed_urls()
         
-        # Create data directory if it doesn't exist
+        # Create both data and lock directories
         self.data_dir = Path(self.config['paths']['data_directory'])
         self.data_dir.mkdir(exist_ok=True)
+        self.lock_dir = self.data_dir  # Lock files will be in same directory
         self.output_file = self.data_dir / self.config['paths']['output_file']
         
         self.console = Console()
@@ -46,10 +50,24 @@ class RSSTranslator:
         """Translate text to configured target language"""
         try:
             if text:
-                return self.translator.translate(
-                    text, 
-                    dest=self.config['translator']['target_language']
-                ).text
+                # First remove HTML tags
+                soup = BeautifulSoup(text, 'html.parser')
+                text = soup.get_text()
+                
+                # Strip quotes if they wrap the entire text
+                text = text.strip('"')
+                
+                # Add delay to respect rate limits
+                time.sleep(1)
+                translator = GoogleTranslator(
+                    source='auto',
+                    target=self.config['translator']['target_language']
+                )
+                translated = translator.translate(text)
+                
+                # Strip quotes from translation if present
+                translated = translated.strip('"')
+                return translated
             return ""
         except Exception as e:
             return f"Translation error: {str(e)}"
@@ -69,7 +87,38 @@ class RSSTranslator:
     def fetch_and_translate_feed(self, url):
         """Fetch and translate a single feed"""
         try:
-            feed = feedparser.parse(url)
+            # Increase timeout and add retry logic
+            max_retries = self.config.get('feed_processing', {}).get('max_retries', 3)
+            timeout = self.config.get('feed_processing', {}).get('request_timeout', 30)
+            
+            for attempt in range(max_retries):
+                try:
+                    response = requests.get(
+                        url, 
+                        timeout=timeout,
+                        headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                    )
+                    response.raise_for_status()
+                    feed = feedparser.parse(response.content)
+                    break  # If successful, break the retry loop
+                except RequestException as e:
+                    if attempt == max_retries - 1:  # Last attempt
+                        rprint(f"[red]Error fetching feed {url} after {max_retries} attempts: {str(e)}[/red]")
+                        logging.error(f"Error fetching feed {url}: {str(e)}")
+                        return
+                    time.sleep(2 ** attempt)  # Exponential backoff
+            
+            # Check if feed parsing was successful
+            if not feed.entries and not getattr(feed, 'status', 200) == 200:
+                rprint(f"[red]Error parsing feed: {url}[/red]")
+                return
+            
+            feed_title = feed.feed.title if hasattr(feed.feed, 'title') else url
+            
+            if not feed.entries:
+                rprint(f"[yellow]ℹ No entries found for: {feed_title}[/yellow]")
+                return
+            
             feed_data = []
             
             # Calculate the cutoff time (24 hours ago) with UTC timezone
@@ -122,15 +171,19 @@ class RSSTranslator:
             error_msg = f"Error processing feed {url}: {str(e)}"
             rprint(f"[red]{error_msg}[/red]")
             logging.error(error_msg, exc_info=True)
+            return
 
     def save_to_json(self, feed_data):
         """Save feed data to JSON file"""
         try:
-            # Add file locking mechanism
-            lock_file = self.output_file.with_suffix('.lock')
+            # Create lock file in data directory
+            lock_file = self.lock_dir / 'translated_feeds.lock'
             
             while lock_file.exists():
                 time.sleep(0.1)
+            
+            # Ensure parent directory exists before creating lock file
+            lock_file.parent.mkdir(exist_ok=True)
             
             # Create lock file
             lock_file.touch()
@@ -160,8 +213,9 @@ class RSSTranslator:
                 logging.info(f"Data saved to {self.output_file}")
 
             finally:
-                # Always remove lock file
-                lock_file.unlink()
+                # Only try to remove if it exists
+                if lock_file.exists():
+                    lock_file.unlink()
 
         except Exception as e:
             logging.error(f"Error saving to JSON: {str(e)}", exc_info=True)
@@ -186,34 +240,33 @@ def main():
     handler.setFormatter(logging.Formatter(app.config['logging']['log_format']))
     
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.ERROR)
     logger.addHandler(handler)
     
     try:
         console.print("[bold blue]Beginning feed processing[/bold blue]")
         
-        # Use ThreadPoolExecutor for parallel processing
+        # Use ThreadPoolExecutor with timeout
         with ThreadPoolExecutor(max_workers=app.config['threading']['max_workers']) as executor:
-            # Create a simple status display
-            total_feeds = len(app.feeds)
-            processed_feeds = 0
+            futures = []
+            for url in app.feeds:
+                future = executor.submit(app.fetch_and_translate_feed, url)
+                futures.append(future)
             
-            futures = [
-                executor.submit(app.fetch_and_translate_feed, url)
-                for url in app.feeds
-            ]
-            
-            for future in as_completed(futures):
+            # Add timeout for each future
+            for future in as_completed(futures, timeout=30):  # 30 second timeout per feed
                 try:
-                    future.result()
-                    processed_feeds += 1
-                    console.print(f"[cyan]Progress: {processed_feeds}/{total_feeds} feeds processed[/cyan]")
+                    future.result(timeout=30)
+                except TimeoutError:
+                    console.print("[yellow]Warning: Feed processing timed out[/yellow]")
                 except Exception as e:
                     console.print(f"[bold red]Error in feed processing: {str(e)}[/bold red]")
-                    logging.error(f"Error in feed processing: {str(e)}")
         
         console.print("[bold green]✓ Feed processing completed successfully![/bold green]")
         
+    except TimeoutError:
+        console.print("[bold red]Process timed out![/bold red]")
+        logging.error("Process timed out")
     except Exception as e:
         console.print(f"[bold red]Unexpected error: {str(e)}[/bold red]")
         logging.error(f"Unexpected error: {str(e)}")
