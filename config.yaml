@@ -1,6 +1,5 @@
 # RSS Translator Configuration
 translator:
-  entries_limit: 5
   description_length: 200
   target_language: 'en'
   sleep_time: 1
@@ -9,8 +8,19 @@ logging:
   log_directory: 'log'
   log_level: 'INFO'
   log_format: '%(asctime)s - %(levelname)s - %(message)s'
+  max_bytes: 10485760  # 10MB
+  backup_count: 5      # Keep 5 backup files
 
 paths:
   data_directory: 'data'
   output_file: 'translated_feeds.json'
-  feed_urls: 'url.md' 
+  feed_urls: 'url.md'
+
+threading:
+  max_workers: 5
+
+feed_processing:
+  max_age_days: 1  # Maximum age of entries to process in days
+
+output:
+  json_indent: 2

@@ -2,7 +2,7 @@ import feedparser
 from googletrans import Translator
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import logging
@@ -11,6 +11,8 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich import print as rprint
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import yaml
+from dateutil import parser
+from logging.handlers import RotatingFileHandler
 
 class RSSTranslator:
     def __init__(self, config_path='config.yaml'):
@@ -70,33 +72,41 @@ class RSSTranslator:
             feed = feedparser.parse(url)
             feed_data = []
             
-            for entry in feed.entries[:self.config['translator']['entries_limit']]:
+            # Calculate the cutoff time (24 hours ago) with UTC timezone
+            cutoff_time = datetime.now(timezone.utc) - timedelta(days=self.config['feed_processing']['max_age_days'])
+            
+            # Process all entries within last 24 hours
+            for entry in feed.entries:
                 # Skip if entry has already been processed
                 if entry.link in self.processed_links:
                     continue
 
+                pub_date = entry.published if hasattr(entry, 'published') else "No date"
+                
+                # Use dateutil parser instead of manual format parsing
+                try:
+                    parsed_date = parser.parse(pub_date)
+                    # Ensure timezone info exists
+                    if parsed_date.tzinfo is None:
+                        parsed_date = parsed_date.replace(tzinfo=timezone.utc)
+                except (ValueError, TypeError):
+                    logging.warning(f"Could not parse date '{pub_date}' for entry from {url}")
+                    continue
+                
+                # Skip if it's too old
+                if parsed_date < cutoff_time:
+                    continue
+
                 title = self.translate_text(entry.title)
                 description = self.translate_text(entry.description) if hasattr(entry, 'description') else ""
-                pub_date = entry.published if hasattr(entry, 'published') else "No date"
-
-                # Convert pub_date to ISO format
-                try:
-                    parsed_date = datetime.strptime(pub_date, '%a, %d %b %Y %H:%M:%S %z')
-                    iso_pub_date = parsed_date.isoformat()
-                except ValueError:
-                    try:
-                        parsed_date = datetime.strptime(pub_date, '%a, %d %b %Y %H:%M:%S %Z')
-                        iso_pub_date = parsed_date.isoformat()
-                    except ValueError:
-                        iso_pub_date = pub_date
 
                 entry_data = {
                     'title': title,
                     'published': pub_date,
                     'link': entry.link,
                     'description': description[:self.config['translator']['description_length']],
-                    'original_date': iso_pub_date,
-                    'translated_at': datetime.now().isoformat()
+                    'original_date': parsed_date.isoformat(),
+                    'translated_at': datetime.now(timezone.utc).isoformat()
                 }
 
                 self.processed_links.add(entry.link)
@@ -109,30 +119,52 @@ class RSSTranslator:
                 rprint(f"[yellow]ℹ[/yellow] No new entries found for: {feed.feed.title if hasattr(feed.feed, 'title') else url}")
 
         except Exception as e:
-            rprint(f"[red]Error processing feed {url}: {str(e)}[/red]")
-            logging.error(f"Error processing feed {url}: {str(e)}")
+            error_msg = f"Error processing feed {url}: {str(e)}"
+            rprint(f"[red]{error_msg}[/red]")
+            logging.error(error_msg, exc_info=True)
 
     def save_to_json(self, feed_data):
         """Save feed data to JSON file"""
         try:
-            # Load existing data if file exists
-            if self.output_file.exists():
-                with open(self.output_file, 'r', encoding='utf-8') as f:
-                    existing_data = json.load(f)
-            else:
-                existing_data = []
-
-            # Add new data
-            existing_data.extend(feed_data)
-
-            # Save updated data
-            with open(self.output_file, 'w', encoding='utf-8') as f:
-                json.dump(existing_data, f, ensure_ascii=False, indent=2)
+            # Add file locking mechanism
+            lock_file = self.output_file.with_suffix('.lock')
             
-            logging.info(f"Data saved to {self.output_file}")
+            while lock_file.exists():
+                time.sleep(0.1)
+            
+            # Create lock file
+            lock_file.touch()
+            
+            try:
+                # Check if the file exists and is not empty
+                if self.output_file.exists() and self.output_file.stat().st_size > 0:
+                    try:
+                        with open(self.output_file, 'r', encoding='utf-8') as f:
+                            existing_data = json.load(f)
+                    except json.JSONDecodeError:
+                        logging.error("Corrupted JSON file detected, creating backup and starting fresh")
+                        # Create backup of corrupted file
+                        backup_file = self.output_file.with_suffix('.backup')
+                        self.output_file.rename(backup_file)
+                        existing_data = []
+                else:
+                    existing_data = []
+
+                # Add new data
+                existing_data.extend(feed_data)
+
+                # Save updated data
+                with open(self.output_file, 'w', encoding='utf-8') as f:
+                    json.dump(existing_data, f, ensure_ascii=False, indent=self.config['output']['json_indent'])
+                
+                logging.info(f"Data saved to {self.output_file}")
+
+            finally:
+                # Always remove lock file
+                lock_file.unlink()
 
         except Exception as e:
-            logging.error(f"Error saving to JSON: {str(e)}")
+            logging.error(f"Error saving to JSON: {str(e)}", exc_info=True)
 
 def main():
     console = Console()
@@ -141,22 +173,27 @@ def main():
     log_dir = Path('log')
     log_dir.mkdir(exist_ok=True)
     
-    # Set up logging with new log directory
-    log_file = log_dir / 'rss_translator.log'
-    logging.basicConfig(
-        filename=log_file,
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        force=True
-    )
-    
+    # Initialize RSSTranslator first
     app = RSSTranslator()
+    
+    # Now set up logging with the app config
+    log_file = log_dir / 'rss_translator.log'
+    handler = RotatingFileHandler(
+        log_file,
+        maxBytes=app.config['logging'].get('max_bytes', 10485760),
+        backupCount=app.config['logging'].get('backup_count', 5)
+    )
+    handler.setFormatter(logging.Formatter(app.config['logging']['log_format']))
+    
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
     
     try:
         console.print("[bold blue]Beginning feed processing[/bold blue]")
         
         # Use ThreadPoolExecutor for parallel processing
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=app.config['threading']['max_workers']) as executor:
             # Create a simple status display
             total_feeds = len(app.feeds)
             processed_feeds = 0
