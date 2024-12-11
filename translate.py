@@ -92,56 +92,58 @@ class RSSTranslator:
             
             for attempt in range(max_retries):
                 try:
-                    # Enhanced headers to mimic a real browser
                     headers = {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                        'Accept': 'application/rss+xml,application/xml;q=0.9,application/xhtml+xml,text/xml;q=0.9,text/html;q=0.8,*/*;q=0.7',
                         'Accept-Language': 'en-US,en;q=0.5',
                         'Accept-Encoding': 'gzip, deflate, br',
                         'Cache-Control': 'no-cache',
                         'Pragma': 'no-cache',
                         'DNT': '1',
-                        'Connection': 'keep-alive',
-                        'Upgrade-Insecure-Requests': '1',
-                        'Sec-Fetch-Dest': 'document',
-                        'Sec-Fetch-Mode': 'navigate',
-                        'Sec-Fetch-Site': 'none',
-                        'Sec-Fetch-User': '?1'
+                        'Connection': 'keep-alive'
                     }
                     
                     session = requests.Session()
                     
-                    # First make a HEAD request to check content type
-                    head_response = session.head(
-                        url,
-                        timeout=timeout,
-                        headers=headers,
-                        allow_redirects=True
-                    )
-                    
-                    # Get the final URL after any redirects
-                    final_url = head_response.url
-                    
+                    # Try different methods to fetch the feed
                     response = session.get(
-                        final_url,
+                        url,
                         timeout=timeout,
                         headers=headers,
                         verify=True
                     )
                     response.raise_for_status()
                     
-                    # Try different parsing methods
+                    # Try multiple parsing approaches
                     feed = feedparser.parse(response.content)
                     
-                    # If no entries found, try parsing as raw XML
+                    # If no entries found, try alternative parsing methods
                     if not feed.entries and response.content:
                         try:
+                            # Try parsing as XML first
                             from xml.etree import ElementTree as ET
                             root = ET.fromstring(response.content)
-                            # Force feedparser to parse as RSS
-                            feed = feedparser.parse(response.content, force_feed=True)
+                            feed = feedparser.parse(response.content)
                         except ET.ParseError:
-                            pass
+                            try:
+                                # Try parsing as HTML and look for feed links
+                                from bs4 import BeautifulSoup
+                                soup = BeautifulSoup(response.content, 'html.parser')
+                                feed_links = soup.find_all('link', type='application/rss+xml')
+                                
+                                if feed_links:
+                                    # Try the first RSS link found
+                                    rss_url = feed_links[0].get('href')
+                                    if rss_url:
+                                        rss_response = session.get(
+                                            rss_url,
+                                            timeout=timeout,
+                                            headers=headers,
+                                            verify=True
+                                        )
+                                        feed = feedparser.parse(rss_response.content)
+                            except Exception as e:
+                                logging.debug(f"HTML parsing failed for {url}: {str(e)}")
                     
                     break  # If successful, break the retry loop
                     
@@ -152,7 +154,7 @@ class RSSTranslator:
                         return
                     time.sleep(2 ** attempt)  # Exponential backoff
             
-            # Debug output
+            # Debug output for empty feeds
             if not feed.entries:
                 logging.debug(f"Feed content for {url}: {response.content[:500]}")
             
