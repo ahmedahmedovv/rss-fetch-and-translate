@@ -3,19 +3,28 @@ name: RSS Translator
 on:
   schedule:
     - cron: '0 */2 * * *'  # Runs every 2 hours
-  workflow_dispatch:  # Allows manual trigger
+  workflow_dispatch:        # Manual trigger
+  push:                    # Add push trigger
+    branches:
+      - main              # Specify branch (change to your main branch name if different)
+    paths:                # Only trigger on specific file changes
+      - 'translate.py'
+      - 'config.yaml'
+      - 'url.md'
+      - 'requirements.txt'
+      - '.github/workflows/**'
 
 jobs:
   translate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # Add overall timeout
+    timeout-minutes: 30
     permissions:
-      contents: write  # Add explicit permission to write contents
+      contents: write
     
     steps:
     - uses: actions/checkout@v3
       with:
-        token: ${{ secrets.GITHUB_TOKEN }}  # Use the built-in token
+        token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -35,7 +44,6 @@ jobs:
     
     - name: Run translator
       run: |
-        # Add retry mechanism for the script
         for i in {1..3}; do
           python translate.py && break || {
             if [[ $i == 3 ]]; then
