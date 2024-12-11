@@ -1,6 +1,6 @@
 # RSS Translator Configuration
 translator:
-  description_length: 200
+  description_length: 500
   target_language: 'en'
   sleep_time: 1
 
