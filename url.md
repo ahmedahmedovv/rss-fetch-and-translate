@@ -58,3 +58,4 @@ https://www.wirtualnemedia.pl/rss/wirtualnemedia_rss.xml
 https://wyborcza.pl/pub/rss/gazetawyborcza_kraj.xml
 https://politepol.com/fd/EgW0phrfwRFg
 https://warsawnow.pl/feed/
+http://www.tvp.info/tvp.info/rss+xml.php
