@@ -2,7 +2,7 @@ name: RSS Translator
 
 on:
   schedule:
-    - cron: '0 */2 * * *'  # Runs every 2 hours
+    - cron: '*/30 * * * *'  # Runs every 30 minutes
   workflow_dispatch:        # Manual trigger
   push:                    # Add push trigger
     branches:
