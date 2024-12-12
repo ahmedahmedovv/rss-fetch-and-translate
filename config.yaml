@@ -21,7 +21,7 @@ threading:
   process_timeout: 120
 
 feed_processing:
-  max_age_days: 1
+  max_age_days: 3
   request_timeout: 45
   max_retries: 3
   retry_delay: 5
